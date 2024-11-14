@@ -1,7 +1,10 @@
 package com.shiyan2;
 
+import java.io.IOException;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
@@ -9,77 +12,48 @@ import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
-import java.io.IOException;
+public class FundFlowStatistics {
 
-public class task1 {
-
-    public static class TokenizerMapper extends Mapper<Object, Text, Text, Text> {
-
-        private Text dateKey = new Text();
-        private Text amtValue = new Text();
-
+    public static class FlowMapper extends Mapper<LongWritable, Text, Text, Text> {
         @Override
-        public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
-            // 拆分行
+        protected void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
             String[] fields = value.toString().split(",");
-            if (fields.length >= 9 && !fields[4].equals("total_purchase_amt")) {
-                String date = fields[1]; // 第二列为report_date
-                String purchaseAmt = fields[4]; // 第五列为total_purchase_amt
-                String redeemAmt = fields[8]; // 第九列为total_redeem_amt
-
-                // 处理缺失值，将其视为零交易
-                if (purchaseAmt.isEmpty()) {
-                    purchaseAmt = "0";
-                }
-                if (redeemAmt.isEmpty()) {
-                    redeemAmt = "0";
-                }
-
-                // 尝试将字符串转换为数字，确保没有无效数据
-                try {
-                    Double.parseDouble(purchaseAmt);
-                    Double.parseDouble(redeemAmt);
-                } catch (NumberFormatException e) {
-                    return; // 忽略含有无效数字的行
-                }
-
-                dateKey.set(date);
-                amtValue.set(purchaseAmt + "," + redeemAmt);
-
-                context.write(dateKey, amtValue);
-            }
+            String date = fields[1]; // 交易日期
+            String purchaseAmt = fields[4].isEmpty() ? "0" : fields[4]; // 资金流入
+            String redeemAmt = fields[9].isEmpty() ? "0" : fields[8]; // 资金流出
+            context.write(new Text(date), new Text(purchaseAmt + "," + redeemAmt));
         }
     }
 
-    public static class SumReducer extends Reducer<Text, Text, Text, Text> {
-
-        private Text result = new Text();
-
+    public static class FlowReducer extends Reducer<Text, Text, Text, Text> {
         @Override
-        public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
-            double totalPurchase = 0;
-            double totalRedeem = 0;
+        protected void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
+            long totalPurchase = 0;
+            long totalRedeem = 0;
+            for (Text value : values) {
+                String[] amounts = value.toString().split(",");
+                if (amounts.length > 0) {
+                    try {
+                        totalPurchase += Long.parseLong(amounts[0]);
+                        totalRedeem += Long.parseLong(amounts[1]);
+                    } catch (NumberFormatException e) {
+                        // 如果amounts[0]不能转换为Long类型，捕获异常并跳过
+                        System.out.println("Skipping non-numeric value: " + amounts[0]);
+                    }
+                }   
 
-            for (Text val : values) {
-                String[] amts = val.toString().split(",");
-                totalPurchase += Double.parseDouble(amts[0]);
-                totalRedeem += Double.parseDouble(amts[1]);
+                
             }
-
-            // 输出格式: <日期> TAB <资金流入量>,<资金流出量>
-            result.set(totalPurchase + "," + totalRedeem);
-            context.write(key, result);
+            context.write(key, new Text(totalPurchase + "," + totalRedeem));
         }
     }
 
     public static void main(String[] args) throws Exception {
         Configuration conf = new Configuration();
-        Job job = Job.getInstance(conf, "Amt Statistics");
-
-        job.setJarByClass(task1.class);
-        job.setMapperClass(TokenizerMapper.class);
-        job.setCombinerClass(SumReducer.class); // 可选，用于本地先行汇总
-        job.setReducerClass(SumReducer.class);
+        Job job = Job.getInstance(conf, "Daily Flow Stats");
+        job.setJarByClass(FundFlowStatistics.class);
+        job.setMapperClass(FlowMapper.class);
+        job.setReducerClass(FlowReducer.class);
 
         job.setOutputKeyClass(Text.class);
         job.setOutputValueClass(Text.class);
