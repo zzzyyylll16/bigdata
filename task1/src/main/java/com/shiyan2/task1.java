@@ -22,8 +22,6 @@ public class task1 {
         public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
             // 拆分行
             String[] fields = value.toString().split(",");
-
-            // 检查是否为标题行以及字段数目是否满足条件，确保不越界访问
             if (fields.length >= 9 && !fields[4].equals("total_purchase_amt")) {
                 String date = fields[1]; // 第二列为report_date
                 String purchaseAmt = fields[4]; // 第五列为total_purchase_amt
